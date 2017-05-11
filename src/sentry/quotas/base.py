@@ -68,7 +68,13 @@ class Quota(Service):
         return int(quota or 0)
 
     def get_project_quota(self, project):
-        from sentry.models import Organization, OrganizationOption
+        from sentry.models import Organization, OrganizationOption, ProjectOption
+
+        max_project_limit = ProjectOption.objects.get_value(
+            project,
+            'quotas:rate-limit',
+            default=None,
+        )
 
         org = getattr(project, '_organization_cache', None)
         if not org:
@@ -79,7 +85,7 @@ class Quota(Service):
             org, 'sentry:project-rate-limit', 100))
 
         if max_quota_share == 100:
-            return (0, 60)
+            return max_project_limit or (0, 60)
 
         org_quota, window = self.get_organization_quota(org)
 
@@ -90,6 +96,14 @@ class Quota(Service):
             )
         else:
             quota = 0
+
+        if not max_project_limit:
+            return (quota, window)
+
+        # if the per-project limit is less aggressive than the organization wide
+        # defined limit, use it
+        if float(max_project_limit[0]) / max_project_limit[1] < float(quota) / window:
+            return max_project_limit
 
         return (quota, window)
 
